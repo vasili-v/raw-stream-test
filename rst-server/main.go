@@ -80,7 +80,7 @@ func handleMsg(req []byte, out chan []byte, f func()) {
 	res := make([]byte, size+2)
 	binary.BigEndian.PutUint16(res, uint16(size))
 	binary.BigEndian.PutUint32(res[2:], id)
-	for i := 6; i < len(out); i++ {
+	for i := 6; i < len(res); i++ {
 		res[i] = 0x55
 	}
 
