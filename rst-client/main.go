@@ -30,12 +30,14 @@ func main() {
 	miss := 0
 	ch := make(chan int)
 
+	th := make(chan int, limit)
 	count := len(pairs)
 	s := scanner.NewScanner(c)
 	go func() {
 		defer close(ch)
 
 		for s.Scan() {
+			<-th
 			msg := s.Bytes()
 
 			if len(msg) < 4 {
@@ -64,6 +66,7 @@ func main() {
 
 	writes := 0
 	for i, p := range pairs {
+		th <- 0
 		writes++
 		p.sent = time.Now()
 		n, err := c.Write(p.req)

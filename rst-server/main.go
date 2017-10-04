@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vasili-v/raw-stream-test/scanner"
@@ -20,11 +21,12 @@ func handleConn(c net.Conn) {
 		}
 	}()
 
-	go readConn(c, ch)
-	writeConn(c, ch)
+	var received uint64
+	go readConn(c, ch, &received)
+	writeConnBuf(c, ch, &received)
 }
 
-func readConn(c net.Conn, out chan []byte) {
+func readConn(c net.Conn, out chan []byte, count *uint64) {
 	var wg sync.WaitGroup
 	defer func() {
 		wg.Wait()
@@ -35,6 +37,7 @@ func readConn(c net.Conn, out chan []byte) {
 	th := make(chan int, limit)
 	for s.Scan() {
 		wg.Add(1)
+		atomic.AddUint64(count, 1)
 
 		th <- 0
 		go handleMsg(s.Bytes(), out, func() {
@@ -48,7 +51,23 @@ func readConn(c net.Conn, out chan []byte) {
 	}
 }
 
-func writeConn(c net.Conn, out chan []byte) {
+func writeConn(c net.Conn, out chan []byte, count *uint64) {
+	i := 0
+	for msg := range out {
+		n, err := c.Write(msg)
+		if err != nil {
+			fmt.Printf("message %d sending to %s error: %s\n", i, c.RemoteAddr(), err)
+			return
+		}
+
+		if n != len(msg) {
+			fmt.Printf("message %d sending to %s incomplete: expected %d sent %d\n", i, c.RemoteAddr(), len(msg), n)
+			return
+		}
+	}
+}
+
+func writeConnBuf(c net.Conn, out chan []byte, count *uint64) {
 	buf := make([]byte, 1024)
 	off := 0
 	rem := len(buf)
@@ -80,7 +99,7 @@ func writeConn(c net.Conn, out chan []byte) {
 		rem -= n
 		end++
 
-		if rem <= 0 || len(out) <= 0 {
+		if rem <= 0 || atomic.LoadUint64(count)-uint64(end) <= 0 {
 			size := len(buf) - rem
 			n, err := c.Write(buf[:size])
 			if err != nil {
