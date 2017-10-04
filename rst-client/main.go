@@ -116,7 +116,7 @@ func newPairs(n int) []*pair {
 	out := make([]*pair, n)
 	fmt.Fprintf(os.Stderr, "making messages to send:\n")
 	for i := range out {
-		buf := make([]byte, 60)
+		buf := make([]byte, msgSize)
 		binary.BigEndian.PutUint16(buf, uint16(len(buf)-2))
 		binary.BigEndian.PutUint32(buf[2:], uint32(i))
 		for i := 6; i < len(buf); i++ {
