@@ -11,7 +11,7 @@ import (
 )
 
 func handleConn(c net.Conn) {
-	ch := make(chan []byte)
+	ch := make(chan []byte, limit)
 	fmt.Printf("got connection from %s\n", c.RemoteAddr())
 	defer func() {
 		fmt.Printf("closing connection to %s\n", c.RemoteAddr())
@@ -49,17 +49,54 @@ func readConn(c net.Conn, out chan []byte) {
 }
 
 func writeConn(c net.Conn, out chan []byte) {
-	i := 0
+	buf := make([]byte, 1024)
+	off := 0
+	rem := len(buf)
+
+	start := 0
+	end := 0
 	for msg := range out {
-		n, err := c.Write(msg)
-		if err != nil {
-			fmt.Printf("message %d sending to %s error: %s\n", i, c.RemoteAddr(), err)
-			return
+		if len(msg) > rem {
+			size := len(buf) - rem
+			n, err := c.Write(buf[:size])
+			if err != nil {
+				fmt.Printf("message %d - %d sending to %s error: %s\n", start, end, c.RemoteAddr(), err)
+				return
+			}
+
+			if n != size {
+				fmt.Printf("message %d - %d sending to %s incomplete: expected %d sent %d\n",
+					start, end, c.RemoteAddr(), size, n)
+				return
+			}
+
+			off = 0
+			rem = len(buf)
+			start = end
 		}
 
-		if n != len(msg) {
-			fmt.Printf("message %d sending to %s incomplete: expected %d sent %d\n", i, c.RemoteAddr(), len(msg), n)
-			return
+		n := copy(buf[off:], msg)
+		off += n
+		rem -= n
+		end++
+
+		if rem <= 0 || len(out) <= 0 {
+			size := len(buf) - rem
+			n, err := c.Write(buf[:size])
+			if err != nil {
+				fmt.Printf("message %d - %d sending to %s error: %s\n", start, end, c.RemoteAddr(), err)
+				return
+			}
+
+			if n != size {
+				fmt.Printf("message %d - %d sending to %s incomplete: expected %d sent %d\n",
+					start, end, c.RemoteAddr(), size, n)
+				return
+			}
+
+			off = 0
+			rem = len(buf)
+			start = end
 		}
 	}
 }
