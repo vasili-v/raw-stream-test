@@ -4,11 +4,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/vasili-v/raw-stream-test/scanner"
+	"github.com/vasili-v/raw-stream-test/sender"
 )
 
 func handleConn(c net.Conn) {
@@ -68,56 +70,16 @@ func writeConn(c net.Conn, out chan []byte, count *uint64) {
 }
 
 func writeConnBuf(c net.Conn, out chan []byte, count *uint64) {
-	buf := make([]byte, 1024)
-	off := 0
-	rem := len(buf)
-
-	start := 0
-	end := 0
+	s := sender.NewSender(c, bufSize, bufSize/6+2)
 	for msg := range out {
-		if len(msg) > rem {
-			size := len(buf) - rem
-			n, err := c.Write(buf[:size])
-			if err != nil {
-				fmt.Printf("message %d - %d sending to %s error: %s\n", start, end, c.RemoteAddr(), err)
-				return
-			}
-
-			if n != size {
-				fmt.Printf("message %d - %d sending to %s incomplete: expected %d sent %d\n",
-					start, end, c.RemoteAddr(), size, n)
-				return
-			}
-
-			off = 0
-			rem = len(buf)
-			start = end
-		}
-
-		n := copy(buf[off:], msg)
-		off += n
-		rem -= n
-		end++
-
-		if rem <= 0 || atomic.LoadUint64(count)-uint64(end) <= 0 {
-			size := len(buf) - rem
-			n, err := c.Write(buf[:size])
-			if err != nil {
-				fmt.Printf("message %d - %d sending to %s error: %s\n", start, end, c.RemoteAddr(), err)
-				return
-			}
-
-			if n != size {
-				fmt.Printf("message %d - %d sending to %s incomplete: expected %d sent %d\n",
-					start, end, c.RemoteAddr(), size, n)
-				return
-			}
-
-			off = 0
-			rem = len(buf)
-			start = end
+		err := s.Send(msg, count)
+		if err != nil {
+			fmt.Printf("sending to %s error: %s\n", c.RemoteAddr(), err)
+			return
 		}
 	}
+
+	s.Stats(os.Stdout, c.RemoteAddr().String())
 }
 
 func handleMsg(req []byte, out chan []byte, f func()) {

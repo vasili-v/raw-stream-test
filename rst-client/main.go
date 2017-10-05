@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vasili-v/raw-stream-test/scanner"
+	"github.com/vasili-v/raw-stream-test/sender"
 )
 
 type pair struct {
@@ -19,7 +20,7 @@ type pair struct {
 }
 
 func main() {
-	pairs := newPairs(total)
+	pairs := newPairs(total, msgSize)
 
 	c, err := net.Dial("tcp", server)
 	if err != nil {
@@ -32,13 +33,13 @@ func main() {
 
 	th := make(chan int, limit)
 	count := len(pairs)
-	s := scanner.NewScanner(c)
+	scn := scanner.NewScanner(c)
 	go func() {
 		defer close(ch)
 
-		for s.Scan() {
+		for scn.Scan() {
 			<-th
-			msg := s.Bytes()
+			msg := scn.Bytes()
 
 			if len(msg) < 4 {
 				panic(fmt.Errorf("expected message %d at least of 4 bytes but got %d", len(pairs)-count+1, len(msg)))
@@ -64,22 +65,22 @@ func main() {
 		}
 	}()
 
-	writes := 0
-	for i, p := range pairs {
+	snd := sender.NewSender(c, bufSize, bufSize/msgSize+2)
+	for _, p := range pairs {
 		th <- 0
-		writes++
-		p.sent = time.Now()
-		n, err := c.Write(p.req)
-		if err != nil {
-			panic(fmt.Errorf("sending error %d: %s", i, err))
-		}
 
-		if n != len(p.req) {
-			panic(fmt.Errorf("sending incomplete %d: expected %d sent %d", i, len(p.req), n))
+		p.sent = time.Now()
+		if err := snd.Send(p.req, nil); err != nil {
+			panic(fmt.Errorf("sending error: %s", err))
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "sent %d messages in %d chunks\n", len(pairs), writes)
+	if err := snd.Flush(); err != nil {
+		panic(fmt.Errorf("sending error: %s", err))
+	}
+
+	snd.Stats(os.Stderr, c.RemoteAddr().String())
+
 	if count > 0 {
 		fmt.Fprintf(os.Stderr, "waiting for %d responses\n", count)
 	}
@@ -89,7 +90,7 @@ func main() {
 	case <-time.After(timeout):
 	}
 
-	if err := s.Err(); err != nil {
+	if err := scn.Err(); err != nil {
 		panic(fmt.Errorf("reading error %s", err))
 	}
 
@@ -115,11 +116,11 @@ func main() {
 	dump(pairs, "")
 }
 
-func newPairs(n int) []*pair {
+func newPairs(n, size int) []*pair {
 	out := make([]*pair, n)
 	fmt.Fprintf(os.Stderr, "making messages to send:\n")
 	for i := range out {
-		buf := make([]byte, msgSize)
+		buf := make([]byte, size)
 		binary.BigEndian.PutUint16(buf, uint16(len(buf)-2))
 		binary.BigEndian.PutUint32(buf[2:], uint32(i))
 		for i := 6; i < len(buf); i++ {
