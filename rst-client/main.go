@@ -21,6 +21,7 @@ type pair struct {
 
 func main() {
 	pairs := newPairs(total, msgSize)
+	waits := newPairs(total, 0)
 
 	c, err := net.Dial("tcp", server)
 	if err != nil {
@@ -65,9 +66,19 @@ func main() {
 		}
 	}()
 
+	wcount := 0
 	snd := sender.NewSender(c, bufSize, bufSize/msgSize+2)
 	for _, p := range pairs {
-		th <- 0
+		select {
+		default:
+			waits[wcount].sent = time.Now()
+			th <- 0
+			t := time.Now()
+			waits[wcount].recv = &t
+			wcount++
+
+		case th <- 0:
+		}
 
 		p.sent = time.Now()
 		if err := snd.Send(p.req, nil); err != nil {
@@ -77,6 +88,10 @@ func main() {
 
 	if err := snd.Flush(); err != nil {
 		panic(fmt.Errorf("sending error: %s", err))
+	}
+
+	if wcount > 0 {
+		waits = waits[:wcount]
 	}
 
 	snd.Stats(os.Stderr, c.RemoteAddr().String())
@@ -114,26 +129,37 @@ func main() {
 	}
 
 	dump(pairs, "")
+	if len(waitsDump) > 0 && wcount > 0 {
+		dump(waits, waitsDump)
+	}
 }
 
 func newPairs(n, size int) []*pair {
 	out := make([]*pair, n)
-	fmt.Fprintf(os.Stderr, "making messages to send:\n")
+
+	if size > 0 {
+		fmt.Fprintf(os.Stderr, "making messages to send:\n")
+	}
+
 	for i := range out {
-		buf := make([]byte, size)
-		binary.BigEndian.PutUint16(buf, uint16(len(buf)-2))
-		binary.BigEndian.PutUint32(buf[2:], uint32(i))
-		for i := 6; i < len(buf); i++ {
-			buf[i] = 0xaa
-		}
+		if size > 0 {
+			buf := make([]byte, size)
+			binary.BigEndian.PutUint16(buf, uint16(len(buf)-2))
+			binary.BigEndian.PutUint32(buf[2:], uint32(i))
+			for i := 6; i < len(buf); i++ {
+				buf[i] = 0xaa
+			}
 
-		if i < 3 {
-			fmt.Fprintf(os.Stderr, "\t%d: % x\n", i, buf)
-		} else if i == 3 {
-			fmt.Fprintf(os.Stderr, "\t%d: ...\n", i)
-		}
+			if i < 3 {
+				fmt.Fprintf(os.Stderr, "\t%d: % x\n", i, buf)
+			} else if i == 3 {
+				fmt.Fprintf(os.Stderr, "\t%d: ...\n", i)
+			}
 
-		out[i] = &pair{req: buf}
+			out[i] = &pair{req: buf}
+		} else {
+			out[i] = &pair{}
+		}
 	}
 
 	return out
